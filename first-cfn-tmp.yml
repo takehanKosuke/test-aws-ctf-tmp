@@ -1,0 +1,116 @@
+# cloudfometionのテンプレートの最初に書かないといけない２行
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Test cfn Template
+
+# Parametaersを使うことで動的にインスタンスのタイプを変更させることができる
+Parameters:
+  InstanceType:
+    # ここのtypeはデータ型を入れるけど、AWS固有のデータ型があるので詳細は↓を見ること
+    # https://docs.aws.amazon.com/ja_jp/AWSCloudFormation/latest/UserGuide/parameters-section-structure.html#aws-specific-parameter-types
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+    Description: select EC2 instance type.
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: selet keyPair name
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      hvm: "ami-a4c7edb2"
+    ap-northeast-1:
+      hvm: "ami-3bd3c45c"
+
+Resources:
+  # リソースの名前
+  # VPC
+  cfnVpc:
+    # cloudfomationでのそれぞれのタイプ（ec2、VPCとかそう言うやつ）
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: '192.168.0.0/16'
+      Tags:
+        - Key: 'Name'
+          Value: 'first-cfn-vpc'
+  # サブネット
+  cfnSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      CidrBlock: '192.168.1.0/24'
+      MapPublicIpOnLaunch : true
+      Tags:
+        - Key: 'Name'
+          Value: 'first-cfn-subnet'
+      VpcId: !Ref cfnVpc
+  # インターネットゲートウェイ
+  cfnInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: 'Name'
+        Value: 'cfn-igw'
+  # マッピング
+  cfnAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref cfnVpc
+      InternetGatewayId: !Ref cfnInternetGateway
+  # ルートテーブル
+  cfnRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+        - Key: 'Name'
+          Value: 'cfn-rt'
+      VpcId: !Ref cfnVpc
+  # ルートのマッピング
+  cfnRoute:
+    Type: AWS::EC2::Route
+    DependsOn: cfnInternetGateway
+    Properties:
+      RouteTableId: !Ref cfnRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref cfnInternetGateway
+  # サブネットとルートテーブルに貼り付け
+  cfnSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref cfnSubnet
+      RouteTableId: !Ref cfnRouteTable
+  # EC2を作るよ
+  cfnEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      # 現在のリージョンによって動的に変更する
+      ImageId: !FindInMap [ RegionMap, !Ref "AWS::Region", hvm ]
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref cfnSubnet
+      BlockDeviceMappings:
+        - DeviceName: '/dev/xvda'
+          Ebs:
+            VolumeType: 'gp2'
+            VolumeSize: 8
+      Tags:
+        - Key: 'Name'
+          Value: 'cfn-ec2-instance'
+      SecurityGroupIds:
+        - !Ref cfnSecurityGroup
+      KeyName: !Ref KeyPair
+  # セキュリティーグループを設定するよ
+  cfnSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "cfnSecurityGroup"
+      VpcId: !Ref cfnVpc
+      Tags:
+        - Key: 'Name'
+          Value: 'cfn-ssh-sg'
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: 0.0.0.0/0
